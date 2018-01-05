@@ -11,8 +11,9 @@ Lead Maintainer: [Adam Bretz](https://github.com/arb)
 
 - [Boom](#boom)
   - [Helper Methods](#helper-methods)
-    - [`wrap(error, [statusCode], [message])`](#wraperror-statuscode-message)
-    - [`create(statusCode, [message], [data])`](#createstatuscode-message-data)
+    - [`new Boom(message, [options])`](#new-boommessage-options)
+    - [`boomify(err, [options])`](#boomifyerr-options)
+    - [`isBoom(err)`](#isboomerr)
   - [HTTP 4xx Errors](#http-4xx-errors)
     - [`Boom.badRequest([message], [data])`](#boombadrequestmessage-data)
     - [`Boom.unauthorized([message], [scheme], [attributes])`](#boomunauthorizedmessage-scheme-attributes)
@@ -32,6 +33,7 @@ Lead Maintainer: [Adam Bretz](https://github.com/arb)
     - [`Boom.unsupportedMediaType([message], [data])`](#boomunsupportedmediatypemessage-data)
     - [`Boom.rangeNotSatisfiable([message], [data])`](#boomrangenotsatisfiablemessage-data)
     - [`Boom.expectationFailed([message], [data])`](#boomexpectationfailedmessage-data)
+    - [`Boom.teapot([message], [data])`](#boomteapotmessage-data)
     - [`Boom.badData([message], [data])`](#boombaddatamessage-data)
     - [`Boom.locked([message], [data])`](#boomlockedmessage-data)
     - [`Boom.preconditionRequired([message], [data])`](#boompreconditionrequiredmessage-data)
@@ -49,11 +51,14 @@ Lead Maintainer: [Adam Bretz](https://github.com/arb)
 
 # Boom
 
-**boom** provides a set of utilities for returning HTTP errors. Each utility returns a `Boom` error response
-object (instance of `Error`) which includes the following properties:
-- `isBoom` - if `true`, indicates this is a `Boom` object instance.
+**boom** provides a set of utilities for returning HTTP errors. Each utility returns a `Boom`
+error response object which includes the following properties:
+- `isBoom` - if `true`, indicates this is a `Boom` object instance. Note that this boolean should
+  only be used if the error is an instance of `Error`. If it is not certain, use `Boom.isBoom()`
+  instead.
 - `isServer` - convenience bool indicating status code >= 500.
 - `message` - the error message.
+- `typeof` - the constructor used to create the error (e.g. `Boom.badRequest`).
 - `output` - the formatted response. Can be directly manipulated after object construction to return a custom
   error response. Allowed root keys:
     - `statusCode` - the HTTP status code (typically 4xx or 5xx).
@@ -69,32 +74,49 @@ object (instance of `Error`) which includes the following properties:
 The `Boom` object also supports the following method:
 - `reformat()` - rebuilds `error.output` using the other object properties.
 
+Note that `Boom` object will return `true` when used with `instanceof Boom`, but do not use the
+`Boom` prototype (they are either plain `Error` or the error prototype passed in). This means
+`Boom` objects should only be tested using `instanceof Boom` or `Boom.isBoom()` but not by looking
+at the prototype or contructor information. This limitation is to avoid manipulating the prototype
+chain which is very slow.
 
 ## Helper Methods
 
-### `wrap(error, [statusCode], [message])`
+### `new Boom(message, [options])`
 
-Decorates an error with the **boom** properties where:
-- `error` - the error object to wrap. If `error` is already a **boom** object, returns back the same object.
-- `statusCode` - optional HTTP status code. Defaults to `500`.
-- `message` - optional message string. If the error already has a message, it adds the message as a prefix.
-  Defaults to no message.
+Creates a new `Boom` object using the provided `message` and then calling
+[`boomify()`](#boomifyerr-options) to decorate the error with the `Boom` properties, where:
+- `message` - the error message. If `message` is an error, it is the same as calling
+  [`boomify()`](#boomifyerr-options) directly.
+- `options` - and optional object where:
+	- `statusCode` - the HTTP status code. Defaults to `500` if no status code is already set.
+    - `data` - additional error information (assigned to `error.data`).
+    - `decorate` - an option with extra properties to set on the error object.
+    - `ctor` - constructor reference used to crop the exception call stack output.
+    - if `message` is an error object, also supports the other [`boomify()`](#boomifyerr-options)
+      options.
+
+### `boomify(err, [options])`
+
+Decorates an error with the `Boom` properties where:
+- `err` - the `Error` object to decorate.
+- `options` - optional object with the following optional settings:
+	- `statusCode` - the HTTP status code. Defaults to `500` if no status code is already set.
+	- `message` - error message string. If the error already has a message, the provided `message` is added as a prefix.
+	  Defaults to no message.
+    - `decorate` - an option with extra properties to set on the error object.
+	- `override` - if `false`, the `err` provided is a `Boom` object, and a `statusCode` or `message` are provided,
+	  the values are ignored. Defaults to `true` (apply the provided `statusCode` and `message` options to the error
+	  regardless of its type, `Error` or `Boom` object).
 
 ```js
 var error = new Error('Unexpected input');
-Boom.wrap(error, 400);
+Boom.boomify(error, { statusCode: 400 });
 ```
 
-### `create(statusCode, [message], [data])`
+### `isBoom(err)`
 
-Generates an `Error` object with the **boom** decorations where:
-- `statusCode` - an HTTP error code number. Must be greater or equal 400.
-- `message` - optional message string.
-- `data` - additional error data set to `error.data` property.
-
-```js
-var error = Boom.create(400, 'Bad request', { timestamp: Date.now() });
-```
+Identifies whether an error is a `Boom` object. Same as calling `instanceof Boom`.
 
 ## HTTP 4xx Errors
 
@@ -127,12 +149,13 @@ Returns a 401 Unauthorized error where:
   - an array of string values. These values will be separated by ', ' and set to the 'WWW-Authenticate' header.
 - `attributes` - an object of values to use while setting the 'WWW-Authenticate' header. This value is only used
   when `scheme` is a string, otherwise it is ignored. Every key/value pair will be included in the
-  'WWW-Authenticate' in the format of 'key="value"' as well as in the response payload under the `attributes` key.
+  'WWW-Authenticate' in the format of 'key="value"' as well as in the response payload under the `attributes` key.  Alternatively value can be a string which is use to set the value of the scheme, for example setting the token value for negotiate header.  If string is used message parameter must be null.
   `null` and `undefined` will be replaced with an empty string. If `attributes` is set, `message` will be used as
   the 'error' segment of the 'WWW-Authenticate' header. If `message` is unset, the 'error' segment of the header
   will not be present and `isMissing` will be true on the error object.
 
-If either `scheme` or `attributes` are set, the resultant `Boom` object will have the 'WWW-Authenticate' header set for the response.
+If either `scheme` or `attributes` are set, the resultant `Boom` object will have the
+'WWW-Authenticate' header set for the response.
 
 ```js
 Boom.unauthorized('invalid password');
@@ -166,6 +189,23 @@ Generates the following response:
 },
 "headers" {
   "WWW-Authenticate": "sample error=\"invalid password\""
+}
+```
+
+```js
+Boom.unauthorized(null, 'Negotiate', 'VGhpcyBpcyBhIHRlc3QgdG9rZW4=');
+```
+
+Generates the following response:
+
+```json
+"payload": {
+    "statusCode": 401,
+    "error": "Unauthorized",
+    "attributes": "VGhpcyBpcyBhIHRlc3QgdG9rZW4="
+},
+"headers" {
+  "WWW-Authenticate": "Negotiate VGhpcyBpcyBhIHRlc3QgdG9rZW4="
 }
 ```
 
@@ -508,6 +548,26 @@ Generates the following response payload:
     "statusCode": 417,
     "error": "Expectation Failed",
     "message": "expected this to work"
+}
+```
+
+### `Boom.teapot([message], [data])`
+
+Returns a 418 I'm a Teapot error where:
+- `message` - optional message.
+- `data` - optional additional error data.
+
+```js
+Boom.teapot('sorry, no coffee...');
+```
+
+Generates the following response payload:
+
+```json
+{
+    "statusCode": 418,
+    "error": "I'm a Teapot",
+    "message": "Sorry, no coffee..."
 }
 ```
 
